@@ -7,6 +7,11 @@ export type DeserializeOptions = {
   maxDepth?: number
 }
 
+export type ParsedValue = string | ParsedObject | ParsedValue[]
+export interface ParsedObject {
+  [key: string]: ParsedValue
+}
+
 type Flat0Input = Record<string, unknown>
 type PathToken = string | number | typeof PUSH_TOKEN
 
@@ -15,20 +20,56 @@ const DEFAULT_ARRAY_INDEXES = true
 const DEFAULT_MAX_DEPTH = 64
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
 
+/**
+ * Returns true when value is a plain key/value object (not an array).
+ *
+ * @example
+ * isRecord({ a: 1 }) // true
+ * isRecord(['a']) // false
+ */
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
+/**
+ * Returns true for objects and arrays, false for primitives/null.
+ *
+ * @example
+ * isObjectLike({}) // true
+ * isObjectLike([]) // true
+ * isObjectLike(1) // false
+ */
 const isObjectLike = (value: unknown): value is Record<string, unknown> | unknown[] =>
   value !== null && typeof value === 'object'
 
+/**
+ * Returns true only for plain objects (Object prototype or null prototype).
+ *
+ * @example
+ * isPlainObject({ a: 1 }) // true
+ * isPlainObject(new Date()) // false
+ */
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (!isRecord(value)) return false
   const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null
 }
 
+/**
+ * Resolves array serialization mode.
+ *
+ * @example
+ * toArrayIndexes() // true
+ * toArrayIndexes({ arrayIndexes: false }) // false
+ */
 const toArrayIndexes = (options?: SerializeOptions): boolean => options?.arrayIndexes ?? DEFAULT_ARRAY_INDEXES
 
+/**
+ * Normalizes and clamps maxDepth to an integer >= 1.
+ *
+ * @example
+ * toMaxDepth({ maxDepth: 3 }) // 3
+ * toMaxDepth({ maxDepth: 0 }) // 1
+ */
 const toMaxDepth = (options?: SerializeOptions | DeserializeOptions): number => {
   const value = options?.maxDepth
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_DEPTH
@@ -37,8 +78,22 @@ const toMaxDepth = (options?: SerializeOptions | DeserializeOptions): number => 
   return normalized
 }
 
+/**
+ * Encodes a query string part.
+ *
+ * @example
+ * encode('a b') // 'a%20b'
+ */
 const encode = (value: string): string => encodeURIComponent(value)
 
+/**
+ * Decodes a query string part and treats '+' as space.
+ * Falls back to raw input if decode fails.
+ *
+ * @example
+ * decode('a+b') // 'a b'
+ * decode('%E0%A4%A') // '%E0%A4%A'
+ */
 const decode = (value: string): string => {
   try {
     return decodeURIComponent(value.replace(/\+/g, ' '))
@@ -47,6 +102,13 @@ const decode = (value: string): string => {
   }
 }
 
+/**
+ * Converts arbitrary values to transport-safe strings.
+ *
+ * @example
+ * toPrimitiveString(10) // '10'
+ * toPrimitiveString({ a: 1 }) // '{"a":1}'
+ */
 const toPrimitiveString = (value: unknown): string => {
   if (value === null || typeof value === 'undefined') return ''
   if (typeof value === 'string') return value
@@ -60,6 +122,14 @@ const toPrimitiveString = (value: unknown): string => {
   }
 }
 
+/**
+ * Parses bracket-style path into tokens used by `assignPathValue`.
+ *
+ * @example
+ * parseKey('user[name]') // ['user', 'name']
+ * parseKey('items[]') // ['items', PUSH_TOKEN]
+ * parseKey('arr[0]') // ['arr', 0]
+ */
 const parseKey = (input: string): PathToken[] => {
   if (!input) return []
   const tokens: PathToken[] = []
@@ -97,6 +167,15 @@ const parseKey = (input: string): PathToken[] => {
   return tokens.length ? tokens : [input]
 }
 
+/**
+ * Appends a key/value into flat map.
+ * Repeated keys are merged into arrays.
+ *
+ * @example
+ * const out = { a: '1' }
+ * appendFlatEntry(out, 'a', '2')
+ * // out.a === ['1', '2']
+ */
 const appendFlatEntry = (target: Flat0Input, key: string, value: unknown): void => {
   if (!(key in target)) {
     target[key] = value
@@ -111,6 +190,14 @@ const appendFlatEntry = (target: Flat0Input, key: string, value: unknown): void 
   target[key] = [existing, value]
 }
 
+/**
+ * Recursively flattens nested data into bracket-notation entries.
+ *
+ * @example
+ * const out: Record<string, unknown> = {}
+ * serializeNode({ user: { name: 'Ada' } }, undefined, out)
+ * // out.user[name] === 'Ada'
+ */
 const serializeNode = (
   value: unknown,
   path: string | undefined,
@@ -173,9 +260,25 @@ const serializeNode = (
   }
 }
 
+/**
+ * Chooses next container type while building nested output.
+ *
+ * @example
+ * createContainerForNext(0) // []
+ * createContainerForNext('name') // {}
+ */
 const createContainerForNext = (next: PathToken | undefined): Record<string, unknown> | unknown[] =>
   typeof next === 'number' || next === PUSH_TOKEN ? [] : {}
 
+/**
+ * Assigns a value into nested object/array using parsed path tokens.
+ * It ignores dangerous prototype-related keys.
+ *
+ * @example
+ * const out: Record<string, unknown> = {}
+ * assignPathValue(out, ['user', 'name'], 'Ada')
+ * // out => { user: { name: 'Ada' } }
+ */
 const assignPathValue = (root: Record<string, unknown>, tokens: PathToken[], value: unknown): void => {
   if (!tokens.length) return
   const first = tokens[0]
@@ -249,6 +352,32 @@ const assignPathValue = (root: Record<string, unknown>, tokens: PathToken[], val
   }
 }
 
+/**
+ * Converts nested plain object input into a flat bracket-notation map.
+ *
+ * `options.arrayIndexes` controls how arrays are encoded:
+ * - `true` (default): { 'tags[0]': 'a', 'tags[1]': 'b' }
+ * - `false`: `{ 'tags[]': ['a', 'b'] }`
+ *
+ * `options.maxDepth` limits recursion depth when walking nested values.
+ * When the limit is reached, the current value is kept at that key as-is.
+ *
+ * @example
+ * serialize({ user: { name: 'Ada' } })
+ * // { 'user[name]': 'Ada' }
+ *
+ * @example
+ * serialize({ tags: ['a', 'b'] }, { arrayIndexes: true })
+ * // { 'tags[0]': 'a', 'tags[1]': 'b' }
+ *
+ * @example
+ * serialize({ tags: ['a', 'b'] }, { arrayIndexes: false })
+ * // { 'tags[]': ['a', 'b'] }
+ *
+ * @example
+ * serialize({ a: { b: { c: 1 } } }, { maxDepth: 2 })
+ * // { 'a[b]': { c: 1 } }
+ */
 export const serialize = (input: unknown, options?: SerializeOptions): Flat0Input => {
   try {
     if (!isRecord(input)) return {}
@@ -260,6 +389,24 @@ export const serialize = (input: unknown, options?: SerializeOptions): Flat0Inpu
   }
 }
 
+/**
+ * Converts a flat bracket-notation map into nested object/array structure.
+ *
+ * `options.maxDepth` limits how deep parsed paths may go.
+ * If a key path exceeds the limit, that pair is preserved as a flat key.
+ *
+ * @example
+ * deserialize({ 'user[name]': 'Ada' })
+ * // { user: { name: 'Ada' } }
+ *
+ * @example
+ * deserialize({ 'items[]': ['a', 'b'] })
+ * // { items: ['a', 'b'] }
+ *
+ * @example
+ * deserialize({ 'a[b][c]': '1' }, { maxDepth: 2 })
+ * // { 'a[b][c]': '1' }
+ */
 export const deserialize = (input: unknown, options?: DeserializeOptions): Record<string, unknown> => {
   try {
     if (!isRecord(input)) return {}
@@ -286,6 +433,24 @@ export const deserialize = (input: unknown, options?: DeserializeOptions): Recor
   }
 }
 
+/**
+ * Serializes input object to URL query string.
+ *
+ * Uses `serialize()` internally, so `arrayIndexes` and `maxDepth` have
+ * the same effect here as they do in `serialize`.
+ *
+ * @example
+ * stringify({ user: { name: 'Ada' } })
+ * // 'user%5Bname%5D=Ada'
+ *
+ * @example
+ * stringify({ tags: ['a', 'b'] }, { arrayIndexes: false })
+ * // 'tags%5B%5D=a&tags%5B%5D=b'
+ *
+ * @example
+ * stringify({ a: { b: { c: 1 } } }, { maxDepth: 2 })
+ * // 'a%5Bb%5D=%7B%22c%22%3A1%7D'
+ */
 export const stringify = (input: unknown, options?: SerializeOptions): string => {
   try {
     const flat = serialize(input, options)
@@ -312,7 +477,26 @@ export const stringify = (input: unknown, options?: SerializeOptions): string =>
   }
 }
 
-export const parse = (input: unknown, options?: DeserializeOptions): Record<string, unknown> => {
+/**
+ * Parses URL query string into nested object/array structure.
+ *
+ * Accepts with or without a leading `?`.
+ * Uses `deserialize()` internally, so `maxDepth` behaves the same:
+ * deeper paths than the limit remain flat keys.
+ *
+ * @example
+ * parse('?user%5Bname%5D=Ada')
+ * // { user: { name: 'Ada' } }
+ *
+ * @example
+ * parse('items%5B%5D=a&items%5B%5D=b')
+ * // { items: ['a', 'b'] }
+ *
+ * @example
+ * parse('a%5Bb%5D%5Bc%5D=1', { maxDepth: 2 })
+ * // { 'a[b][c]': '1' }
+ */
+export const parse = (input: unknown, options?: DeserializeOptions): ParsedObject => {
   try {
     if (typeof input !== 'string') return {}
     const query = input.startsWith('?') ? input.slice(1) : input
@@ -330,7 +514,7 @@ export const parse = (input: unknown, options?: DeserializeOptions): Record<stri
       const value = decode(rawValue)
       appendFlatEntry(flat, key, value)
     }
-    return deserialize(flat, options)
+    return deserialize(flat, options) as ParsedObject
   } catch {
     return {}
   }
