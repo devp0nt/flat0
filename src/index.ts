@@ -7,6 +7,19 @@ export type DeserializeOptions = {
   maxDepth?: number
 }
 
+export type StringifyOptions = {
+  arrayIndexes?: boolean
+  maxDepth?: number
+  toPrimitiveString?: (value: unknown) => string | typeof DELETE_VALUE
+}
+
+export type ParseOptions = {
+  maxDepth?: number
+  fromPrimitiveString?: (value: unknown) => string | typeof DELETE_VALUE
+}
+
+export const DELETE_VALUE = Symbol('flat0-delete')
+
 export type ParsedValue = string | ParsedObject | ParsedValue[]
 export interface ParsedObject {
   [key: string]: ParsedValue
@@ -109,8 +122,9 @@ const decode = (value: string): string => {
  * toPrimitiveString(10) // '10'
  * toPrimitiveString({ a: 1 }) // '{"a":1}'
  */
-const toPrimitiveString = (value: unknown): string => {
-  if (value === null || typeof value === 'undefined') return ''
+export const toPrimitiveString = (value: unknown): string => {
+  if (typeof value === 'undefined') return 'undefined'
+  if (value === null) return 'null'
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return String(value)
@@ -451,26 +465,35 @@ export const deserialize = (input: unknown, options?: DeserializeOptions): Recor
  * stringify({ a: { b: { c: 1 } } }, { maxDepth: 2 })
  * // 'a%5Bb%5D=%7B%22c%22%3A1%7D'
  */
-export const stringify = (input: unknown, options?: SerializeOptions): string => {
+export const stringify = (input: unknown, options?: StringifyOptions): string => {
+  const toS = options?.toPrimitiveString ?? toPrimitiveString
   try {
     const flat = serialize(input, options)
     const chunks: string[] = []
     for (const [key, rawValue] of Object.entries(flat)) {
       if (Array.isArray(rawValue)) {
         for (const item of rawValue) {
-          chunks.push(`${encode(key)}=${encode(toPrimitiveString(item))}`)
+          const value = toS(item)
+          if (value === DELETE_VALUE) continue
+          chunks.push(`${encode(key)}=${encode(value)}`)
         }
         continue
       }
-      chunks.push(`${encode(key)}=${encode(toPrimitiveString(rawValue))}`)
+      const value = toS(rawValue)
+      if (value === DELETE_VALUE) continue
+      chunks.push(`${encode(key)}=${encode(value)}`)
     }
     return chunks.join('&')
   } catch {
     try {
       if (!isRecord(input)) return ''
-      return new URLSearchParams(
-        Object.fromEntries(Object.entries(input).map(([k, v]) => [k, toPrimitiveString(v)])),
-      ).toString()
+      const urlParams = new URLSearchParams()
+      for (const [key, rawValue] of Object.entries(input)) {
+        const value = toS(rawValue)
+        if (value === DELETE_VALUE) continue
+        urlParams.set(key, value)
+      }
+      return urlParams.toString()
     } catch {
       return ''
     }
@@ -496,8 +519,9 @@ export const stringify = (input: unknown, options?: SerializeOptions): string =>
  * parse('a%5Bb%5D%5Bc%5D=1', { maxDepth: 2 })
  * // { 'a[b][c]': '1' }
  */
-export const parse = (input: unknown, options?: DeserializeOptions): ParsedObject => {
+export const parse = (input: unknown, options?: ParseOptions): ParsedObject => {
   try {
+    const fromS = options?.fromPrimitiveString ?? ((value: string) => value)
     if (typeof input !== 'string') return {}
     const query = input.startsWith('?') ? input.slice(1) : input
     if (!query) return {}
@@ -511,7 +535,8 @@ export const parse = (input: unknown, options?: DeserializeOptions): ParsedObjec
       const rawValue = separatorIndex === -1 ? '' : pair.slice(separatorIndex + 1)
       const key = decode(rawKey)
       if (!key) continue
-      const value = decode(rawValue)
+      const value = fromS(decode(rawValue))
+      if (value === DELETE_VALUE) continue
       appendFlatEntry(flat, key, value)
     }
     return deserialize(flat, options) as ParsedObject
@@ -519,3 +544,12 @@ export const parse = (input: unknown, options?: DeserializeOptions): ParsedObjec
     return {}
   }
 }
+
+export const flat0 = {
+  serialize,
+  deserialize,
+  stringify,
+  parse,
+}
+
+export default flat0

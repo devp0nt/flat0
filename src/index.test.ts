@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { deserialize, parse, serialize, stringify } from './index.js'
+import { DELETE_VALUE, deserialize, parse, serialize, stringify } from './index.js'
 
 const buildNPath = (segments: number): string => {
   if (segments <= 0) return ''
@@ -57,7 +57,8 @@ describe('flat0', () => {
     }
 
     const query = stringify(input)
-    expect(query).toBe('x=1&deep%5By%5D=2&list%5B0%5D=a&list%5B1%5D=b')
+    expect(decodeURIComponent(query)).toBe('x=1&deep[y]=2&list[0]=a&list[1]=b')
+    expect(decodeURIComponent(query)).not.toBe(query)
     expect(parse(query)).toEqual({
       x: '1',
       deep: { y: '2' },
@@ -72,15 +73,50 @@ describe('flat0', () => {
     }
 
     const query = stringify(input, { arrayIndexes: false })
-    expect(query).toBe('list%5B%5D=a&list%5B%5D=b&nested%5Btags%5D%5B%5D=x&nested%5Btags%5D%5B%5D=y')
+    expect(decodeURIComponent(query)).toBe('list[]=a&list[]=b&nested[tags][]=x&nested[tags][]=y')
+    expect(decodeURIComponent(query)).not.toBe(query)
     expect(parse(query)).toEqual({
       list: ['a', 'b'],
       nested: { tags: ['x', 'y'] },
     })
   })
 
+  it('stringify supports custom toPrimitiveString', () => {
+    const input = {
+      id: 7,
+      enabled: true,
+      secret: 'skip-me',
+    }
+
+    const query = stringify(input, {
+      toPrimitiveString: (value) => {
+        if (value === 'skip-me') return DELETE_VALUE
+        return `v:${String(value)}`
+      },
+    })
+
+    expect(decodeURIComponent(query)).toBe('id=v:7&enabled=v:true')
+    expect(decodeURIComponent(query)).not.toBe(query)
+    expect(query).not.toContain('secret')
+  })
+
   it('parses query starting with question mark and repeated key', () => {
     expect(parse('?a=1&a=2')).toEqual({ a: ['1', '2'] })
+  })
+
+  it('parse supports custom fromPrimitiveString', () => {
+    const parsed = parse('a=1&b=keep&drop=remove', {
+      fromPrimitiveString: (value) => {
+        if (value === 'remove') return DELETE_VALUE
+        return `x:${String(value)}`
+      },
+    })
+
+    expect(parsed).toEqual({
+      a: 'x:1',
+      b: 'x:keep',
+    })
+    expect(parsed.drop).toBeUndefined()
   })
 
   it('never throws and falls back to simple output', () => {
@@ -192,13 +228,39 @@ describe('flat0', () => {
     expect(flat['node[self]']).toBe(node)
 
     const query = stringify(input)
-    expect(query).toContain('node%5Bid%5D=1')
-    expect(query).toContain('node%5Bself%5D=%5Bobject%20Object%5D')
+    const decodedQuery = decodeURIComponent(query)
+    expect(decodedQuery).toContain('node[id]=1')
+    expect(decodedQuery).toContain('node[self]=[object Object]')
+    expect(decodedQuery).not.toBe(query)
   })
 
   it('skips prototype pollution keys', () => {
     const parsed = parse('__proto__%5Bpolluted%5D=yes&safe=1')
     expect(parsed).toEqual({ safe: '1' })
     expect(({} as { polluted?: string }).polluted).toBeUndefined()
+  })
+
+  it('it omits undefined when stringifying', () => {
+    const input = {
+      a: undefined,
+      b: 'b',
+      c: '',
+      d: [{ x: undefined }],
+    }
+    const query = stringify(input)
+    const round = parse(query)
+    expect(round).toEqual({ a: 'undefined', b: 'b', c: '', d: [{ x: 'undefined' }] })
+  })
+
+  it('it omits null when stringifying', () => {
+    const input = {
+      a: null,
+      b: 'b',
+      c: '',
+      d: [{ x: null }],
+    }
+    const query = stringify(input)
+    const round = parse(query)
+    expect(round).toEqual({ a: 'null', b: 'b', c: '', d: [{ x: 'null' }] })
   })
 })
