@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/devp0nt/flat0/compare/v1.1.1...v1.1.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* add stringify and parse custom fns ([76eea91](https://github.com/devp0nt/flat0/commit/76eea918fe7664e4b94ff2580782283b61ea5c81))
+
 ## [1.1.1](https://github.com/devp0nt/flat0/compare/v1.1.0...v1.1.1) (2026-03-10)
 
 
