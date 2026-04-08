@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/devp0nt/flat0/compare/v1.1.2...v1.1.3) (2026-04-08)
+
+
+### Bug Fixes
+
+* fix empty objects stringify ([db27d7e](https://github.com/devp0nt/flat0/commit/db27d7e24c04c1a28cf6e2f129ccae49281175fa))
+
 ## [1.1.2](https://github.com/devp0nt/flat0/compare/v1.1.1...v1.1.2) (2026-04-06)
 
 
