@@ -244,7 +244,7 @@ const serializeNode = (
   if (Array.isArray(value)) {
     if (!path) return
     if (value.length === 0) {
-      appendFlatEntry(out, `${path}[]`, '')
+      // Omit empty arrays from serialized output.
       return
     }
     for (let index = 0; index < value.length; index += 1) {
@@ -263,7 +263,7 @@ const serializeNode = (
   const keys = Object.keys(value)
   if (!path && keys.length === 0) return
   if (path && keys.length === 0) {
-    appendFlatEntry(out, path, '')
+    // Omit empty plain objects from serialized output.
     return
   }
 

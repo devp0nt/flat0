@@ -263,4 +263,40 @@ describe('flat0', () => {
     const round = parse(query)
     expect(round).toEqual({ a: 'null', b: 'b', c: '', d: [{ x: 'null' }] })
   })
+
+  it('it removes empty object on stringify', () => {
+    const input = {
+      a: null,
+      b: 'b',
+      c: '',
+      d: {},
+    }
+    const query = stringify(input)
+    const round = parse(query)
+    expect(round).toEqual({ a: 'null', b: 'b', c: '' })
+  })
+
+  it('it removes empty array on stringify', () => {
+    const input = {
+      a: null,
+      b: 'b',
+      c: '',
+      d: [],
+    }
+    const query = stringify(input)
+    const round = parse(query)
+    expect(round).toEqual({ a: 'null', b: 'b', c: '' })
+  })
+
+  it('it removes nested empty object on stringify', () => {
+    const input = {
+      a: null,
+      b: 'b',
+      c: '',
+      d: { e: {} },
+    }
+    const query = stringify(input)
+    const round = parse(query)
+    expect(round).toEqual({ a: 'null', b: 'b', c: '' })
+  })
 })
